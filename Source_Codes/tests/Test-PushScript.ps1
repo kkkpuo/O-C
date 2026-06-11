@@ -15,10 +15,16 @@ foreach ($needle in @(
     "git status -s",
     "set ""msg=",
     "set ""MAX_PUSH_ATTEMPTS=3""",
+    "git rev-parse --abbrev-ref HEAD",
+    "git rev-parse --abbrev-ref --symbolic-full-name @{u}",
+    "git rev-list --count @{u}..HEAD",
+    "git ls-remote origin HEAD",
     "git add .",
     "git -c core.quotepath=false commit -m ""%msg%""",
     "git push",
+    "git push -u origin %CURRENT_BRANCH%",
     "Nothing new to commit, continuing to push existing commits",
+    "No local changes or pending commits. GitHub push skipped.",
     "Retrying git push",
     "timeout /t 3 /nobreak >nul"
 )) {
