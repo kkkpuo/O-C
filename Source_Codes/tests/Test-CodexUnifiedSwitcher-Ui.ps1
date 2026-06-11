@@ -83,6 +83,7 @@ Assert-Contains "System.Drawing.Size(640, 112)" "natural status card size"
 Assert-Contains "System.Drawing.Size(42, 32)" "softer picker button size"
 Assert-Contains '(0 - $form.Left)' "drag offset form left compatibility"
 Assert-Contains '(0 - $script:dragOffset.X)' "drag offset x compatibility"
+Assert-Contains '$brand = New-GlassLabel -Text "O-C"' "top-left O-C brand label"
 Assert-Contains "\u5207\u6362\u81f3OAuth" "OAuth button label"
 Assert-Contains "\u5207\u6362\u81f3CPAMC" "CPAMC button label"
 Assert-Contains "\u6a21\u5f0f\u5207\u6362" "sidebar mode switch label"
@@ -114,7 +115,8 @@ foreach ($forbidden in @(
     "cpamcBrowse",
     "repairCurrentButton",
     "refreshButton",
-    "closeButton = New-GlassButton"
+    "closeButton = New-GlassButton",
+    '$brand = New-GlassLabel -Text "C-O"'
 )) {
     if ($source.Contains($forbidden)) {
         throw "Integrated UI must not expose forbidden control: $forbidden"

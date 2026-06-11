@@ -1006,7 +1006,7 @@ function Show-UnifiedForm {
     $brandMark.Add_HandleCreated({ Set-RoundedRegion $brandMark 12 })
     $sidebar.Controls.Add($brandMark)
 
-    $brand = New-GlassLabel -Text "C-O" -Location (New-Object System.Drawing.Point(76, 28)) -Size (New-Object System.Drawing.Size(110, 30)) -Style "title"
+    $brand = New-GlassLabel -Text "O-C" -Location (New-Object System.Drawing.Point(76, 28)) -Size (New-Object System.Drawing.Size(110, 30)) -Style "title"
     $brand.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 15, [System.Drawing.FontStyle]::Bold)
     $sidebar.Controls.Add($brand)
 
