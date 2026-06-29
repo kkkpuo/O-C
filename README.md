@@ -36,7 +36,22 @@ O-C 就是为了解决这个切换痛点而做的工具。
 - 支持自定义备份目录
 - 切换前自动备份当前状态
 - 自动同步本地聊天记录 provider 元数据
+- 未检测到 `sqlite3.exe` 时自动使用 Python fallback 同步 SQLite
+- 切换 API/OAuth 时保留并恢复对应 profile 的 auth 状态
+- 切换完成后自动重新启动 Codex Desktop
 - Windows 图形界面，适合不想手动改配置文件的用户
+
+## 最近修复和升级
+
+当前 `main` 分支已包含这几次修复：
+
+- 修复缺少 `sqlite3.exe` 时聊天记录 provider 同步失败的问题；现在会自动 fallback 到 Python SQLite。
+- 修复切换 CPAMC/API 时 provider 写死的问题；现在会读取目标 `config.toml` 中实际配置的 provider。
+- 修复 API/OAuth 两套登录状态保存和恢复不稳定的问题。
+- 修复切换后需要手动重新打开 Codex 的问题；现在切换完成后会自动启动 Codex Desktop。
+- 补充 UI、切换逻辑和打包检查，降低改完脚本后打包遗漏的风险。
+
+如果你是从 GitHub clone 源码，需要先在本机打包；如果只想直接双击使用，请下载 Release 包。
 
 ## 界面预览
 
@@ -117,6 +132,22 @@ D:\codex-back
 ```text
 %APPDATA%\C-O\settings.json
 ```
+
+### 从源码仓库拉下来使用
+
+源码仓库不提交 `dist/` 编译产物。clone 后需要本机安装 .NET SDK，然后在仓库根目录运行：
+
+```cmd
+Build-O-C-Release.bat
+```
+
+打包成功后使用：
+
+```text
+dist\O-C\O-C.exe
+```
+
+如果你不想安装 .NET SDK 或自己打包，请直接下载 GitHub Release 中的压缩包。
 
 ## 如何切换模式
 
@@ -254,35 +285,35 @@ Source_Codes\tools\CodexUnifiedSwitcher.ps1
 
 推送源码到 GitHub：
 
-```powershell
-.\Push-GitHub.bat
+```cmd
+Push-GitHub.bat
 ```
 
 脚本会自动检查变更、添加文件、使用默认提交说明提交，并推送到当前仓库的上游分支。
 
 运行 UI 检查：
 
-```powershell
+```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Source_Codes\tests\Test-CodexUnifiedSwitcher-Ui.ps1
 ```
 
 运行切换逻辑检查：
 
-```powershell
+```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Source_Codes\tests\Test-CodexUnifiedSwitcher.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Source_Codes\tests\Test-CodexUnifiedSwitcher-CPAMCWithoutAuth.ps1
 ```
 
 运行打包检查：
 
-```powershell
+```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Source_Codes\tests\Test-OCPackaging.ps1
 ```
 
 生成 Release 压缩包：
 
-```powershell
-.\Build-O-C-Release.bat
+```cmd
+Build-O-C-Release.bat
 ```
 
 打包完成后，产物会输出到：
