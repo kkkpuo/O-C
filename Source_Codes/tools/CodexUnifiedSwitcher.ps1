@@ -610,12 +610,67 @@ function Invoke-HistoryProviderSync(
     }
 }
 
+function Split-CodexSharedConfigSections([string]$Content) {
+    $baseLines = New-Object System.Collections.Generic.List[string]
+    $shared = [ordered]@{}
+    $sharedHeader = $null
+    $sharedLines = New-Object System.Collections.Generic.List[string]
+
+    foreach ($line in [regex]::Split($Content, "\r?\n")) {
+        if ($line -match '^\s*\[([^\]]+)\]\s*(?:#.*)?$') {
+            if ($sharedHeader) {
+                $shared[$sharedHeader] = ($sharedLines -join [Environment]::NewLine).TrimEnd()
+            }
+            $section = $Matches[1].Trim()
+            $sharedHeader = if ($section -match '^(marketplaces|plugins|mcp_servers|hooks)(\.|$)') { $section } else { $null }
+            $sharedLines = New-Object System.Collections.Generic.List[string]
+        }
+
+        if ($sharedHeader) {
+            $sharedLines.Add($line)
+        } else {
+            $baseLines.Add($line)
+        }
+    }
+    if ($sharedHeader) {
+        $shared[$sharedHeader] = ($sharedLines -join [Environment]::NewLine).TrimEnd()
+    }
+
+    return [PSCustomObject]@{
+        Base = ($baseLines -join [Environment]::NewLine).TrimEnd()
+        Shared = $shared
+    }
+}
+
+function Merge-CodexSharedConfigSections([string]$TargetContent, [string]$CurrentContent) {
+    $target = Split-CodexSharedConfigSections $TargetContent
+    $current = Split-CodexSharedConfigSections $CurrentContent
+    foreach ($header in $current.Shared.Keys) {
+        $target.Shared[$header] = $current.Shared[$header]
+    }
+
+    $parts = New-Object System.Collections.Generic.List[string]
+    if ($target.Base) { $parts.Add($target.Base) }
+    foreach ($block in $target.Shared.Values) {
+        if ($block) { $parts.Add($block) }
+    }
+    return (($parts -join ([Environment]::NewLine + [Environment]::NewLine)).TrimEnd() + [Environment]::NewLine)
+}
+
 function Copy-ConfigToCodex($SourcePath, $CodexHome) {
     if (-not (Test-Path -LiteralPath $SourcePath)) {
         throw ((U "\u627e\u4e0d\u5230\u914d\u7f6e\u6587\u4ef6\uff1a") + "`n$SourcePath")
     }
     New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
-    Copy-Item -LiteralPath $SourcePath -Destination (Join-Path $CodexHome "config.toml") -Force
+    $destination = Join-Path $CodexHome "config.toml"
+    $targetContent = [System.IO.File]::ReadAllText($SourcePath)
+    $currentContent = if (Test-Path -LiteralPath $destination) {
+        [System.IO.File]::ReadAllText($destination)
+    } else {
+        ""
+    }
+    $merged = Merge-CodexSharedConfigSections -TargetContent $targetContent -CurrentContent $currentContent
+    [System.IO.File]::WriteAllText($destination, $merged, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Move-ApiAuthForOAuth($CodexHome, $CurrentProvider, $AuthMode) {

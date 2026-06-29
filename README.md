@@ -49,6 +49,7 @@ O-C 就是为了解决这个切换痛点而做的工具。
 - 修复切换 CPAMC/API 时 provider 写死的问题；现在会读取目标 `config.toml` 中实际配置的 provider。
 - 修复 API/OAuth 两套登录状态保存和恢复不稳定的问题。
 - 修复切换后需要手动重新打开 Codex 的问题；现在切换完成后会自动启动 Codex Desktop。
+- 修复切换时插件、插件 Skills、MCP 和 hooks 配置被覆盖的问题；两种模式现在共享同一套扩展环境。
 - 补充 UI、切换逻辑和打包检查，降低改完脚本后打包遗漏的风险。
 
 如果你是从 GitHub clone 源码，需要先在本机打包；如果只想直接双击使用，请下载 Release 包。

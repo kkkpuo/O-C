@@ -12,6 +12,7 @@ $requiredFunctions = @(
     "Get-CodexProvider",
     "Save-ModeProfile",
     "Invoke-HistoryProviderSync",
+    "Merge-CodexSharedConfigSections",
     "Switch-CodexProfileMode"
 )
 foreach ($name in $requiredFunctions) {
@@ -63,6 +64,9 @@ New-Item -ItemType Directory -Path (Join-Path $appRoot "profiles\cpamc") -Force 
 
 Set-Content -LiteralPath $officialConfig -Encoding UTF8 -Value @"
 model_provider = "openai"
+
+[plugins."official-only@personal"]
+enabled = true
 "@
 Set-Content -LiteralPath $cpamcConfig -Encoding UTF8 -Value @"
 model_provider = "MyOpenAI"
@@ -70,8 +74,29 @@ model_provider = "MyOpenAI"
 [model_providers.MyOpenAI]
 name = "MyOpenAI"
 requires_openai_auth = false
+
+[plugins."cpamc-only@personal"]
+enabled = true
 "@
-Set-Content -LiteralPath (Join-Path $codexHome "config.toml") -Encoding UTF8 -Value (Get-Content -LiteralPath $officialConfig -Raw)
+Set-Content -LiteralPath (Join-Path $codexHome "config.toml") -Encoding UTF8 -Value @"
+$(Get-Content -LiteralPath $officialConfig -Raw)
+
+[marketplaces.ponytail]
+source_type = "local"
+source = "D:\Codex_project\ponytail"
+
+[plugins."ponytail@ponytail"]
+enabled = true
+
+[plugins."codegraph@personal"]
+enabled = true
+
+[mcp_servers.codegraph]
+command = "codegraph"
+
+[hooks.state."ponytail@ponytail:hooks/test.json:session_start:0:0"]
+trusted_hash = "sha256:test"
+"@
 Set-Content -LiteralPath (Join-Path $codexHome "auth.json") -Encoding UTF8 -Value '{"auth_mode":"chatgpt"}'
 Set-Content -LiteralPath (Join-Path $appRoot "profiles\cpamc\auth.json") -Encoding UTF8 -Value '{"OPENAI_API_KEY":"test-api-key"}'
 Copy-Item -LiteralPath $cpamcConfig -Destination (Join-Path $appRoot "profiles\cpamc\config.toml") -Force
@@ -109,6 +134,19 @@ try {
     }
     if ((Get-CodexAuthKind -CodexHome $codexHome) -ne "api") {
         throw "Expected API-key auth after CPAMC switch"
+    }
+    $cpamcConfigAfterSwitch = Get-Content -LiteralPath (Join-Path $codexHome "config.toml") -Raw
+    foreach ($expected in @(
+        '[plugins."ponytail@ponytail"]',
+        '[plugins."codegraph@personal"]',
+        '[plugins."official-only@personal"]',
+        '[plugins."cpamc-only@personal"]',
+        '[mcp_servers.codegraph]',
+        '[hooks.state."ponytail@ponytail:hooks/test.json:session_start:0:0"]'
+    )) {
+        if (-not $cpamcConfigAfterSwitch.Contains($expected)) {
+            throw "Expected shared config section after CPAMC switch: $expected"
+        }
     }
     if ((Get-Content -LiteralPath $rolloutPath -Raw) -notmatch '"model_provider"\s*:\s*"MyOpenAI"') {
         throw "Expected rollout provider MyOpenAI after CPAMC switch"
@@ -152,6 +190,19 @@ try {
     }
     if ((Get-CodexProvider -CodexHome $codexHome) -ne "openai") {
         throw "Expected config provider openai after OAuth switch"
+    }
+    $oauthConfigAfterSwitch = Get-Content -LiteralPath (Join-Path $codexHome "config.toml") -Raw
+    foreach ($expected in @(
+        '[plugins."ponytail@ponytail"]',
+        '[plugins."codegraph@personal"]',
+        '[plugins."official-only@personal"]',
+        '[plugins."cpamc-only@personal"]',
+        '[mcp_servers.codegraph]',
+        '[hooks.state."ponytail@ponytail:hooks/test.json:session_start:0:0"]'
+    )) {
+        if (-not $oauthConfigAfterSwitch.Contains($expected)) {
+            throw "Expected shared config section after OAuth switch: $expected"
+        }
     }
     if ((Get-Content -LiteralPath (Join-Path $codexHome "auth.json") -Raw) -notmatch '"auth_mode"\s*:\s*"chatgpt"') {
         throw "Expected restored OpenAI auth after OAuth switch"
