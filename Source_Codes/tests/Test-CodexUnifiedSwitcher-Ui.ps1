@@ -104,6 +104,18 @@ Assert-Contains "\u9009\u62e9 CPAMC \u914d\u7f6e\u6587\u4ef6" "CPAMC folder butt
 Assert-Contains "OpenFileDialog" "file picker dialog"
 Assert-Contains "Invoke-HistoryProviderSync -TargetProvider `$currentProvider" "pre-switch provider sync"
 Assert-Contains "Invoke-HistoryProviderSync -TargetProvider `$targetProvider" "post-switch provider sync"
+Assert-Contains "function Get-PythonSqliteRunner" "Python sqlite fallback discovery"
+Assert-Contains "function Invoke-NativeCommandCapture" "PowerShell 5.1 native command capture"
+Assert-Contains "function Backup-SqliteDatabase" "consistent SQLite backup helper"
+Assert-Contains "Python 3 with the sqlite3 module" "actionable SQLite fallback warning"
+Assert-Contains "function Get-CodexProviderRequiresOpenAIAuth" "provider auth requirement detection"
+Assert-Contains "function Get-CodexAuthKind" "API and OAuth credential detection"
+Assert-Contains '$targetProvider = Get-CodexProvider $CodexHome' "target provider from copied config"
+Assert-Contains "function Get-CodexDesktopAppId" "Codex Store application ID discovery"
+Assert-Contains "function Start-CodexDesktop" "Codex automatic restart helper"
+Assert-Contains "shell:AppsFolder" "stable Store application launch"
+Assert-Contains "CodexRestart = `$codexRestart" "switch restart result"
+Assert-Contains "\u5df2\u81ea\u52a8\u542f\u52a8 Codex" "automatic restart success message"
 
 foreach ($forbidden in @(
     "\u6253\u5f00Provider Sync",

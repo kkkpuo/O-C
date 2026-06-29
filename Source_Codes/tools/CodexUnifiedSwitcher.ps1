@@ -128,6 +128,64 @@ function Get-CodexAuthMode($CodexHome = $Script:DefaultCodexHome) {
     return "unknown"
 }
 
+function Get-CodexProviderRequiresOpenAIAuth($CodexHome = $Script:DefaultCodexHome) {
+    # Read the active provider's authentication requirement from its TOML section.
+    $configPath = Join-Path $CodexHome "config.toml"
+    if (-not (Test-Path -LiteralPath $configPath)) { return $null }
+
+    $provider = Get-CodexProvider $CodexHome
+    $inTargetProvider = $false
+    foreach ($line in Get-Content -LiteralPath $configPath -ErrorAction Stop) {
+        $trimmed = $line.Trim()
+        $sectionMatch = [regex]::Match(
+            $trimmed,
+            '^\[model_providers\.(?:"([^"]+)"|([^\]]+))\]\s*$'
+        )
+        if ($sectionMatch.Success) {
+            $sectionProvider = $sectionMatch.Groups[1].Value
+            if ([string]::IsNullOrWhiteSpace($sectionProvider)) {
+                $sectionProvider = $sectionMatch.Groups[2].Value.Trim()
+            }
+            $inTargetProvider = $sectionProvider -eq $provider
+            continue
+        }
+        if ($trimmed.StartsWith("[")) {
+            $inTargetProvider = $false
+            continue
+        }
+        if (-not $inTargetProvider) { continue }
+
+        $requiresMatch = [regex]::Match(
+            $trimmed,
+            '^requires_openai_auth\s*=\s*(true|false)\s*$',
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+        if ($requiresMatch.Success) {
+            return $requiresMatch.Groups[1].Value -ieq "true"
+        }
+    }
+    return $null
+}
+
+function Get-CodexAuthKind($CodexHome = $Script:DefaultCodexHome) {
+    # Distinguish API-key credentials from ChatGPT/OAuth tokens without exposing values.
+    $authPath = Join-Path $CodexHome "auth.json"
+    if (-not (Test-Path -LiteralPath $authPath)) { return "missing" }
+    try {
+        $auth = Get-Content -LiteralPath $authPath -Raw | ConvertFrom-Json
+        if (-not [string]::IsNullOrWhiteSpace([string]$auth.OPENAI_API_KEY)) {
+            return "api"
+        }
+        if ([string]$auth.auth_mode -match "api|key") {
+            return "api"
+        }
+        if ([string]$auth.auth_mode -match "chatgpt|oauth" -or $auth.tokens) {
+            return "oauth"
+        }
+    } catch {}
+    return "unknown"
+}
+
 function Backup-ActiveAuthConfig(
     $CodexHome = $Script:DefaultCodexHome,
     $AppRoot = $Script:DefaultAppRoot
@@ -171,13 +229,16 @@ function Save-CurrentModeProfile(
     $AppRoot = $Script:DefaultAppRoot
 ) {
     $provider = Get-CodexProvider $CodexHome
-    if ($provider -eq "openai" -or $provider -eq "missing") {
-        return Save-ModeProfile -ProfileName "official" -CodexHome $CodexHome -AppRoot $AppRoot
-    }
-    if ($provider -eq "CPA" -or $provider -eq "CPAMC") {
+    $authKind = Get-CodexAuthKind $CodexHome
+    $requiresOpenAIAuth = Get-CodexProviderRequiresOpenAIAuth $CodexHome
+
+    if ($authKind -eq "api" -or $requiresOpenAIAuth -eq $false) {
         return Save-ModeProfile -ProfileName "cpamc" -CodexHome $CodexHome -AppRoot $AppRoot
     }
-    return $null
+    if ($authKind -eq "oauth" -or $provider -eq "openai" -or $provider -eq "missing") {
+        return Save-ModeProfile -ProfileName "official" -CodexHome $CodexHome -AppRoot $AppRoot
+    }
+    return Save-ModeProfile -ProfileName "cpamc" -CodexHome $CodexHome -AppRoot $AppRoot
 }
 
 function Close-CodexIfRunning {
@@ -198,6 +259,48 @@ function Close-CodexIfRunning {
 
     $processes | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
+}
+
+function Get-CodexDesktopAppId {
+    # Resolve the stable Store application ID instead of a versioned WindowsApps path.
+    try {
+        $apps = @(Get-StartApps -Name "Codex" -ErrorAction Stop)
+        $match = $apps |
+            Where-Object { $_.AppID -like "OpenAI.Codex_*!App" } |
+            Select-Object -First 1
+        if ($match -and -not [string]::IsNullOrWhiteSpace([string]$match.AppID)) {
+            return [string]$match.AppID
+        }
+    } catch {}
+    return $null
+}
+
+function Start-CodexDesktop {
+    # Start Codex through shell:AppsFolder and report failure without undoing a completed switch.
+    $appId = Get-CodexDesktopAppId
+    if ([string]::IsNullOrWhiteSpace($appId)) {
+        return [PSCustomObject]@{
+            Started = $false
+            Warning = "Configuration switched, but the Codex Desktop application ID was not found."
+        }
+    }
+
+    try {
+        Start-Process `
+            -FilePath "explorer.exe" `
+            -ArgumentList "shell:AppsFolder\$appId" `
+            -ErrorAction Stop | Out-Null
+        Start-Sleep -Seconds 2
+        return [PSCustomObject]@{
+            Started = $true
+            Warning = $null
+        }
+    } catch {
+        return [PSCustomObject]@{
+            Started = $false
+            Warning = "Configuration switched, but Codex could not be started automatically: $($_.Exception.Message)"
+        }
+    }
 }
 
 function Read-FirstLineRecord($Path) {
@@ -252,6 +355,86 @@ function Get-RelativeBackupPath($BasePath, $ChildPath) {
     return ($childFull -replace '[:\\\/]+', '_')
 }
 
+function Invoke-NativeCommandCapture($FilePath, $Arguments) {
+    # Capture native output and exit status without PowerShell 5.1 terminating on stderr.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $FilePath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    return [PSCustomObject]@{
+        Output = @($output)
+        ExitCode = $exitCode
+    }
+}
+
+function Get-PythonSqliteRunner {
+    # Find a Python interpreter whose standard-library sqlite3 module is usable.
+    foreach ($candidate in @("python", "python3", "py")) {
+        $command = Get-Command $candidate -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if (-not $command) { continue }
+
+        $prefixArgs = @()
+        if ($candidate -eq "py") {
+            $prefixArgs = @("-3")
+        }
+
+        $probeArgs = @($prefixArgs) + @("-c", "import sqlite3")
+        $probe = Invoke-NativeCommandCapture -FilePath $command.Source -Arguments $probeArgs
+        if ($probe.ExitCode -eq 0) {
+            return [PSCustomObject]@{
+                Source = $command.Source
+                PrefixArgs = [string[]]$prefixArgs
+            }
+        }
+    }
+    return $null
+}
+
+function Backup-SqliteDatabase($SourcePath, $DestinationPath) {
+    # Produce a transactionally consistent database copy before provider metadata changes.
+    $sqlite = Get-Command sqlite3 -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($sqlite) {
+        $safeDestination = $DestinationPath.Replace("'", "''")
+        $result = Invoke-NativeCommandCapture `
+            -FilePath $sqlite.Source `
+            -Arguments @($SourcePath, "PRAGMA busy_timeout=10000; VACUUM INTO '$safeDestination';")
+        if ($result.ExitCode -ne 0) {
+            throw (($result.Output | Out-String).Trim())
+        }
+        return
+    }
+
+    $python = Get-PythonSqliteRunner
+    if (-not $python) {
+        throw "Cannot create a consistent SQLite backup. Install sqlite3.exe or Python 3 with the sqlite3 module."
+    }
+
+    $pythonScript = @'
+import sqlite3
+import sys
+
+source = sqlite3.connect(sys.argv[1], timeout=10)
+destination = sqlite3.connect(sys.argv[2])
+try:
+    source.execute('PRAGMA busy_timeout=10000')
+    source.backup(destination)
+finally:
+    destination.close()
+    source.close()
+'@
+    $pythonArgs = @($python.PrefixArgs) + @("-c", $pythonScript, $SourcePath, $DestinationPath)
+    $result = Invoke-NativeCommandCapture -FilePath $python.Source -Arguments $pythonArgs
+    if ($result.ExitCode -ne 0) {
+        throw (($result.Output | Out-String).Trim())
+    }
+}
+
 function Get-RolloutProviderChanges($CodexHome, $TargetProvider) {
     $changes = New-Object System.Collections.Generic.List[object]
     foreach ($dirName in @("sessions", "archived_sessions")) {
@@ -303,13 +486,20 @@ function Backup-HistorySyncState(
     $backupRoot = Join-Path $HistoryBackupRoot "$stamp-$TargetProvider"
     New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
 
-    foreach ($name in @("config.toml", "state_5.sqlite", ".codex-global-state.json")) {
+    foreach ($name in @("config.toml", ".codex-global-state.json")) {
         $path = Join-Path $CodexHome $name
         if (Test-Path -LiteralPath $path) {
             $target = Join-Path $backupRoot $name
             New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
             Copy-Item -LiteralPath $path -Destination $target -Force
         }
+    }
+
+    $dbPath = Join-Path $CodexHome "state_5.sqlite"
+    if (Test-Path -LiteralPath $dbPath) {
+        Backup-SqliteDatabase `
+            -SourcePath $dbPath `
+            -DestinationPath (Join-Path $backupRoot "state_5.sqlite")
     }
 
     foreach ($change in $Changes) {
@@ -328,20 +518,54 @@ function Invoke-SqliteProviderSync($CodexHome, $TargetProvider) {
         return [PSCustomObject]@{ UpdatedRows = 0; Present = $false; Warning = $null }
     }
 
-    $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
-    if (-not $sqlite) {
-        return [PSCustomObject]@{
-            UpdatedRows = 0
-            Present = $true
-            Warning = "sqlite3.exe not found; SQLite provider metadata was not updated."
+    $sqlite = Get-Command sqlite3 -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($sqlite) {
+        $safeProvider = $TargetProvider.Replace("'", "''")
+        $sql = "PRAGMA busy_timeout=5000; BEGIN IMMEDIATE; UPDATE threads SET model_provider = '$safeProvider' WHERE COALESCE(model_provider, '') <> '$safeProvider'; SELECT changes(); COMMIT;"
+        $result = Invoke-NativeCommandCapture -FilePath $sqlite.Source -Arguments @($dbPath, $sql)
+        if ($result.ExitCode -ne 0) {
+            throw (($result.Output | Out-String).Trim())
         }
-    }
+        $output = $result.Output
+    } else {
+        $python = Get-PythonSqliteRunner
+        if (-not $python) {
+            return [PSCustomObject]@{
+                UpdatedRows = 0
+                Present = $true
+                Warning = "SQLite provider metadata was not updated. Install sqlite3.exe or Python 3 with the sqlite3 module."
+            }
+        }
 
-    $safeProvider = $TargetProvider.Replace("'", "''")
-    $sql = "PRAGMA busy_timeout=5000; BEGIN IMMEDIATE; UPDATE threads SET model_provider = '$safeProvider' WHERE COALESCE(model_provider, '') <> '$safeProvider'; SELECT changes(); COMMIT;"
-    $output = & $sqlite.Source $dbPath $sql 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw (($output | Out-String).Trim())
+        $pythonScript = @'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1], timeout=10)
+try:
+    connection.execute('PRAGMA busy_timeout=10000')
+    connection.execute('BEGIN IMMEDIATE')
+    cursor = connection.execute(
+        '''UPDATE threads
+              SET model_provider = ?
+            WHERE COALESCE(model_provider, '') <> ?''',
+        (sys.argv[2], sys.argv[2]),
+    )
+    print(cursor.rowcount)
+    connection.commit()
+except Exception:
+    connection.rollback()
+    raise
+finally:
+    connection.close()
+'@
+        $pythonArgs = @($python.PrefixArgs) + @("-c", $pythonScript, $dbPath, $TargetProvider)
+        $result = Invoke-NativeCommandCapture -FilePath $python.Source -Arguments $pythonArgs
+        if ($result.ExitCode -ne 0) {
+            throw (($result.Output | Out-String).Trim())
+        }
+        $output = $result.Output
     }
 
     $updated = 0
@@ -441,6 +665,10 @@ function Switch-CodexProfileMode(
     $authBackup = Backup-ActiveAuthConfig -CodexHome $CodexHome -AppRoot $AppRoot
     $movedAuth = $null
     $targetProvider = $null
+    $codexRestart = [PSCustomObject]@{
+        Started = $false
+        Warning = $null
+    }
 
     if ($Target -eq "CPAMC") {
         $cpamcProfile = Join-Path $AppRoot "profiles\cpamc"
@@ -451,7 +679,7 @@ function Switch-CodexProfileMode(
         } else {
             $movedAuth = Move-OAuthAuthForCPAMC -CodexHome $CodexHome -CurrentProvider $currentProvider -AuthMode $authMode
         }
-        $targetProvider = "CPA"
+        $targetProvider = Get-CodexProvider $CodexHome
     } else {
         $movedAuth = Move-ApiAuthForOAuth -CodexHome $CodexHome -CurrentProvider $currentProvider -AuthMode $authMode
         Copy-ConfigToCodex -SourcePath $OfficialConfigPath -CodexHome $CodexHome
@@ -459,10 +687,13 @@ function Switch-CodexProfileMode(
         if (Test-Path -LiteralPath $officialAuth) {
             Copy-Item -LiteralPath $officialAuth -Destination (Join-Path $CodexHome "auth.json") -Force
         }
-        $targetProvider = "openai"
+        $targetProvider = Get-CodexProvider $CodexHome
     }
 
     $postSync = Invoke-HistoryProviderSync -TargetProvider $targetProvider -CodexHome $CodexHome -HistoryBackupRoot $HistoryBackupRoot
+    if (-not $SkipProcessCheck) {
+        $codexRestart = Start-CodexDesktop
+    }
     return [PSCustomObject]@{
         Target = $Target
         PreviousProvider = $currentProvider
@@ -472,6 +703,7 @@ function Switch-CodexProfileMode(
         SavedProfile = $savedProfile
         AuthBackup = $authBackup
         MovedAuth = $movedAuth
+        CodexRestart = $codexRestart
     }
 }
 
@@ -490,6 +722,13 @@ function Format-SwitchResult($Result) {
     if ($Result.PostSync.Warning) {
         $lines.Add("")
         $lines.Add("Warning: $($Result.PostSync.Warning)")
+    }
+    if ($Result.CodexRestart.Started) {
+        $lines.Add("")
+        $lines.Add((U "\u5df2\u81ea\u52a8\u542f\u52a8 Codex\u3002"))
+    } elseif ($Result.CodexRestart.Warning) {
+        $lines.Add("")
+        $lines.Add("Warning: $($Result.CodexRestart.Warning)")
     }
     return ($lines -join [Environment]::NewLine)
 }
