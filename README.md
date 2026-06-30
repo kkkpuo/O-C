@@ -52,7 +52,7 @@ O-C 就是为了解决这个切换痛点而做的工具。
 - 修复切换时插件、插件 Skills、MCP 和 hooks 配置被覆盖的问题；两种模式现在共享同一套扩展环境。
 - 补充 UI、切换逻辑和打包检查，降低改完脚本后打包遗漏的风险。
 
-如果你是从 GitHub clone 源码，需要先在本机打包；如果只想直接双击使用，请下载 Release 包。
+如果只想直接双击使用，请下载仓库里的 `dist/O-C-v0.1.0-win-x64.zip` 并解压；如果从 GitHub clone 源码，需要先在本机打包。
 
 ## 界面预览
 
@@ -108,7 +108,7 @@ D:\codex-configs\cpamc-config.toml
 
 ## 第一次使用 O-C
 
-1. 下载 Release 压缩包并解压。
+1. 下载仓库里的 `dist/O-C-v0.1.0-win-x64.zip` 并解压。
 2. 双击 `O-C.exe` 启动 O-C。
 3. 如果想创建桌面快捷方式，双击 `Create-O-C-Shortcut.bat`，脚本会在桌面生成 `O-C.lnk`。
 4. 打开左侧的 `设置`。
@@ -148,7 +148,7 @@ Build-O-C-Release.bat
 dist\O-C\O-C.exe
 ```
 
-如果你不想安装 .NET SDK 或自己打包，请直接下载 GitHub Release 中的压缩包。
+如果你不想安装 .NET SDK 或自己打包，请直接下载仓库里的 `dist/O-C-v0.1.0-win-x64.zip`。
 
 ## 如何切换模式
 
