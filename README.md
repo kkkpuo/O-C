@@ -259,6 +259,34 @@ config.toml 中的账号/provider 私有配置
 
 这部分只负责扩展环境同步；账号配置同步需要加密后单独做。
 
+## 安全清理
+
+O-C 提供安全清理功能，只清理 O-C 自己产生的旧备份和旧发布包，不会删除 Codex 真实聊天历史。
+
+会清理：
+
+```text
+<备份目录>\codex-switch\backups
+<备份目录>\history-sync
+<备份目录>\c-o-safety-backups
+dist\O-C-v*.zip 的旧版本
+```
+
+不会清理：
+
+```text
+%USERPROFILE%\.codex\sessions
+%USERPROFILE%\.codex\archived_sessions
+%USERPROFILE%\.codex\state_5.sqlite
+auth.json
+config.toml
+skills
+plugins
+hooks
+```
+
+建议先点 `预览清理`，确认列表后再点 `立即清理`。
+
 ## O-C 会修改哪些文件
 
 O-C 主要会修改或备份 `%USERPROFILE%\.codex` 里的文件，例如：

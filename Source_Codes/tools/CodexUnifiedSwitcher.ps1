@@ -726,6 +726,69 @@ function Import-CodexSharedEnvironment($CodexHome, $SyncRoot) {
     return $envRoot
 }
 
+function Get-SafeCleanupCandidates($BackupRoot, $RepoRoot, [int]$RetentionDays = 14, [int]$KeepMinimum = 3) {
+    $cutoff = (Get-Date).AddDays(0 - [Math]::Max(1, $RetentionDays))
+    $items = @()
+
+    foreach ($path in @(
+        (Join-Path $BackupRoot "codex-switch\backups"),
+        (Join-Path $BackupRoot "history-sync"),
+        (Join-Path $BackupRoot "c-o-safety-backups")
+    )) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $children = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+        $old = @($children | Select-Object -Skip ([Math]::Max(0, $KeepMinimum)) | Where-Object { $_.LastWriteTime -lt $cutoff })
+        foreach ($entry in $old) {
+            $items += [PSCustomObject]@{
+                Path = $entry.FullName
+                Kind = "backup"
+                LastWriteTime = $entry.LastWriteTime
+            }
+        }
+    }
+
+    $dist = Join-Path $RepoRoot "dist"
+    if (Test-Path -LiteralPath $dist) {
+        $zips = @(Get-ChildItem -LiteralPath $dist -Filter "O-C-v*.zip" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+        foreach ($zip in @($zips | Select-Object -Skip 2)) {
+            $items += [PSCustomObject]@{
+                Path = $zip.FullName
+                Kind = "release"
+                LastWriteTime = $zip.LastWriteTime
+            }
+        }
+    }
+
+    return $items
+}
+
+function Invoke-SafeCleanup($BackupRoot, $RepoRoot, [int]$RetentionDays = 14, [int]$KeepMinimum = 3, [switch]$Preview) {
+    $candidates = @(Get-SafeCleanupCandidates -BackupRoot $BackupRoot -RepoRoot $RepoRoot -RetentionDays $RetentionDays -KeepMinimum $KeepMinimum)
+    if (-not $Preview) {
+        foreach ($item in $candidates) {
+            Remove-Item -LiteralPath $item.Path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return [PSCustomObject]@{
+        Preview = [bool]$Preview
+        Count = $candidates.Count
+        Items = $candidates
+    }
+}
+
+function Format-CleanupResult($Result) {
+    $mode = if ($Result.Preview) { U "\u9884\u89c8" } else { U "\u5df2\u6e05\u7406" }
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("$mode：$($Result.Count) 项")
+    foreach ($item in @($Result.Items | Select-Object -First 20)) {
+        $lines.Add("- [$($item.Kind)] $($item.Path)")
+    }
+    if ($Result.Count -gt 20) {
+        $lines.Add("...")
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
 function Copy-ConfigToCodex($SourcePath, $CodexHome) {
     if (-not (Test-Path -LiteralPath $SourcePath)) {
         throw ((U "\u627e\u4e0d\u5230\u914d\u7f6e\u6587\u4ef6\uff1a") + "`n$SourcePath")
@@ -1495,7 +1558,7 @@ function Show-UnifiedForm {
     $cpamcButton.Font = New-Object System.Drawing.Font("Microsoft YaHei UI", 12, [System.Drawing.FontStyle]::Bold)
     $configPanel.Controls.Add($cpamcButton)
 
-    $settingsCard = New-GlassPanel -Location (New-Object System.Drawing.Point(56, 44)) -Size (New-Object System.Drawing.Size(640, 438)) -Radius 10
+    $settingsCard = New-GlassPanel -Location (New-Object System.Drawing.Point(56, 44)) -Size (New-Object System.Drawing.Size(640, 464)) -Radius 10
     $settingsPage.Controls.Add($settingsCard)
 
     $settingsTitle = New-GlassLabel -Text (U "\u8def\u5f84\u8bbe\u7f6e") -Location (New-Object System.Drawing.Point(26, 24)) -Size (New-Object System.Drawing.Size(180, 30)) -Style "title"
@@ -1555,6 +1618,12 @@ function Show-UnifiedForm {
 
     $importSharedEnvButton = New-GlassButton -Text (U "\u5bfc\u5165\u5171\u4eab\u73af\u5883") -Location (New-Object System.Drawing.Point(380, 374)) -Size (New-Object System.Drawing.Size(168, 40))
     $settingsCard.Controls.Add($importSharedEnvButton)
+
+    $previewCleanupButton = New-GlassButton -Text (U "\u9884\u89c8\u6e05\u7406") -Location (New-Object System.Drawing.Point(190, 420)) -Size (New-Object System.Drawing.Size(168, 34))
+    $settingsCard.Controls.Add($previewCleanupButton)
+
+    $runCleanupButton = New-GlassButton -Text (U "\u7acb\u5373\u6e05\u7406") -Location (New-Object System.Drawing.Point(380, 420)) -Size (New-Object System.Drawing.Size(168, 34)) -Kind "accent"
+    $settingsCard.Controls.Add($runCleanupButton)
 
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($officialPicker, (U "\u9009\u62e9 OpenAI \u914d\u7f6e\u6587\u4ef6"))
@@ -1719,6 +1788,35 @@ function Show-UnifiedForm {
             Import-CodexSharedEnvironment -CodexHome $settings.codexHome -SyncRoot $syncRoot | Out-Null
             Refresh-UiStatus
             [System.Windows.Forms.MessageBox]::Show(((U "\u5171\u4eab\u73af\u5883\u5df2\u5bfc\u5165\uff1a") + "`n$syncRoot"), $Script:Title, "OK", "Information") | Out-Null
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, $Script:Title, "OK", "Warning") | Out-Null
+        }
+    })
+    $previewCleanupButton.Add_Click({
+        try {
+            $settings.backupRoot = $backupRootText.Text.Trim()
+            Save-SwitcherSettings $settings
+            $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+            $result = Invoke-SafeCleanup -BackupRoot $settings.backupRoot -RepoRoot $repoRoot -Preview
+            [System.Windows.Forms.MessageBox]::Show((Format-CleanupResult $result), $Script:Title, "OK", "Information") | Out-Null
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, $Script:Title, "OK", "Warning") | Out-Null
+        }
+    })
+    $runCleanupButton.Add_Click({
+        try {
+            $settings.backupRoot = $backupRootText.Text.Trim()
+            Save-SwitcherSettings $settings
+            $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+            $preview = Invoke-SafeCleanup -BackupRoot $settings.backupRoot -RepoRoot $repoRoot -Preview
+            if ($preview.Count -eq 0) {
+                [System.Windows.Forms.MessageBox]::Show((Format-CleanupResult $preview), $Script:Title, "OK", "Information") | Out-Null
+                return
+            }
+            $confirm = [System.Windows.Forms.MessageBox]::Show((Format-CleanupResult $preview), $Script:Title, "OKCancel", "Warning")
+            if ($confirm -ne [System.Windows.Forms.DialogResult]::OK) { return }
+            $result = Invoke-SafeCleanup -BackupRoot $settings.backupRoot -RepoRoot $repoRoot
+            [System.Windows.Forms.MessageBox]::Show((Format-CleanupResult $result), $Script:Title, "OK", "Information") | Out-Null
         } catch {
             [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, $Script:Title, "OK", "Warning") | Out-Null
         }
