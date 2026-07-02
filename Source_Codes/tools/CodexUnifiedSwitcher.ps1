@@ -1547,8 +1547,14 @@ function Show-UnifiedForm {
     $codexHomeText = Add-InlineSettingRow (U "Codex \u6570\u636e") $settings.codexHome 224 "folder"
     $backupRootText = Add-InlineSettingRow (U "\u5907\u4efd\u76ee\u5f55") $settings.backupRoot 292 "folder"
 
-    $saveSettingsButton = New-GlassButton -Text (U "\u4fdd\u5b58\u8bbe\u7f6e") -Location (New-Object System.Drawing.Point(28, 374)) -Size (New-Object System.Drawing.Size(154, 40)) -Kind "primary"
+    $saveSettingsButton = New-GlassButton -Text (U "\u4fdd\u5b58\u8bbe\u7f6e") -Location (New-Object System.Drawing.Point(28, 374)) -Size (New-Object System.Drawing.Size(140, 40)) -Kind "primary"
     $settingsCard.Controls.Add($saveSettingsButton)
+
+    $exportSharedEnvButton = New-GlassButton -Text (U "\u5bfc\u51fa\u5171\u4eab\u73af\u5883") -Location (New-Object System.Drawing.Point(190, 374)) -Size (New-Object System.Drawing.Size(168, 40))
+    $settingsCard.Controls.Add($exportSharedEnvButton)
+
+    $importSharedEnvButton = New-GlassButton -Text (U "\u5bfc\u5165\u5171\u4eab\u73af\u5883") -Location (New-Object System.Drawing.Point(380, 374)) -Size (New-Object System.Drawing.Size(168, 40))
+    $settingsCard.Controls.Add($importSharedEnvButton)
 
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($officialPicker, (U "\u9009\u62e9 OpenAI \u914d\u7f6e\u6587\u4ef6"))
@@ -1564,6 +1570,13 @@ function Show-UnifiedForm {
             $settings.backupRoot = $Script:DefaultBackupRoot
         }
         Save-SwitcherSettings $settings
+    }
+
+    function Get-UiSharedEnvironmentRoot {
+        if ([string]::IsNullOrWhiteSpace($settings.backupRoot)) {
+            $settings.backupRoot = $Script:DefaultBackupRoot
+        }
+        return (Join-Path $settings.backupRoot "codex-shared-environment")
     }
 
     function Sync-SettingsInputsToMode {
@@ -1680,6 +1693,35 @@ function Show-UnifiedForm {
         Ensure-SwitcherDirs (Get-AppRootFromBackupRoot $settings.backupRoot)
         Refresh-UiStatus
         [System.Windows.Forms.MessageBox]::Show((U "\u8bbe\u7f6e\u5df2\u4fdd\u5b58"), $Script:Title, "OK", "Information") | Out-Null
+    })
+    $exportSharedEnvButton.Add_Click({
+        try {
+            $settings.officialConfigPath = $officialSettingsText.Text.Trim()
+            $settings.cpamcConfigPath = $cpamcSettingsText.Text.Trim()
+            $settings.codexHome = $codexHomeText.Text.Trim()
+            $settings.backupRoot = $backupRootText.Text.Trim()
+            Save-SwitcherSettings $settings
+            $syncRoot = Get-UiSharedEnvironmentRoot
+            Export-CodexSharedEnvironment -CodexHome $settings.codexHome -SyncRoot $syncRoot | Out-Null
+            [System.Windows.Forms.MessageBox]::Show(((U "\u5171\u4eab\u73af\u5883\u5df2\u5bfc\u51fa\uff1a") + "`n$syncRoot"), $Script:Title, "OK", "Information") | Out-Null
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, $Script:Title, "OK", "Warning") | Out-Null
+        }
+    })
+    $importSharedEnvButton.Add_Click({
+        try {
+            $settings.officialConfigPath = $officialSettingsText.Text.Trim()
+            $settings.cpamcConfigPath = $cpamcSettingsText.Text.Trim()
+            $settings.codexHome = $codexHomeText.Text.Trim()
+            $settings.backupRoot = $backupRootText.Text.Trim()
+            Save-SwitcherSettings $settings
+            $syncRoot = Get-UiSharedEnvironmentRoot
+            Import-CodexSharedEnvironment -CodexHome $settings.codexHome -SyncRoot $syncRoot | Out-Null
+            Refresh-UiStatus
+            [System.Windows.Forms.MessageBox]::Show(((U "\u5171\u4eab\u73af\u5883\u5df2\u5bfc\u5165\uff1a") + "`n$syncRoot"), $Script:Title, "OK", "Information") | Out-Null
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, $Script:Title, "OK", "Warning") | Out-Null
+        }
     })
     $closeTopButton.Add_Click({ $form.Close() })
     $minButton.Add_Click({ $form.WindowState = [System.Windows.Forms.FormWindowState]::Minimized })

@@ -227,6 +227,19 @@ history-sync/
 
 O-C 可以导出和导入 Codex 的共享扩展环境，适合在多台电脑之间同步插件、MCP、hooks 和自定义 Skills。
 
+在 `设置` 页点击：
+
+```text
+导出共享环境
+导入共享环境
+```
+
+默认同步目录是：
+
+```text
+<备份目录>\codex-shared-environment
+```
+
 会同步：
 
 ```text
