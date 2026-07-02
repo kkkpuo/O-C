@@ -223,6 +223,29 @@ history-sync/
 
 保存清理旧文件、迁移备份目录或升级工具时产生的安全备份。
 
+## 跨电脑共享扩展环境
+
+O-C 可以导出和导入 Codex 的共享扩展环境，适合在多台电脑之间同步插件、MCP、hooks 和自定义 Skills。
+
+会同步：
+
+```text
+config.toml 中的 [marketplaces.*]、[plugins.*]、[mcp_servers.*]、[hooks.*]
+hooks.json
+skills\
+```
+
+不会同步：
+
+```text
+auth.json
+API Key
+OAuth token
+config.toml 中的账号/provider 私有配置
+```
+
+这部分只负责扩展环境同步；账号配置同步需要加密后单独做。
+
 ## O-C 会修改哪些文件
 
 O-C 主要会修改或备份 `%USERPROFILE%\.codex` 里的文件，例如：

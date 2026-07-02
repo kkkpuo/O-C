@@ -97,6 +97,19 @@ function Save-SwitcherSettings($Settings, $SettingsPath = $Script:DefaultSetting
     $Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsPath -Encoding UTF8
 }
 
+function Copy-DirectoryContents($Source, $Destination) {
+    if (-not (Test-Path -LiteralPath $Source)) { return }
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
+        $target = Join-Path $Destination $_.Name
+        if ($_.PSIsContainer) {
+            Copy-Item -LiteralPath $_.FullName -Destination $target -Recurse -Force
+        } else {
+            Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+        }
+    }
+}
+
 function Get-CodexProvider($CodexHome = $Script:DefaultCodexHome) {
     $configPath = Join-Path $CodexHome "config.toml"
     if (-not (Test-Path -LiteralPath $configPath)) { return "missing" }
@@ -655,6 +668,62 @@ function Merge-CodexSharedConfigSections([string]$TargetContent, [string]$Curren
         if ($block) { $parts.Add($block) }
     }
     return (($parts -join ([Environment]::NewLine + [Environment]::NewLine)).TrimEnd() + [Environment]::NewLine)
+}
+
+function Get-CodexSharedConfigContent($CodexHome = $Script:DefaultCodexHome) {
+    $configPath = Join-Path $CodexHome "config.toml"
+    if (-not (Test-Path -LiteralPath $configPath)) { return "" }
+    $split = Split-CodexSharedConfigSections ([System.IO.File]::ReadAllText($configPath))
+    return (($split.Shared.Values | Where-Object { $_ }) -join ([Environment]::NewLine + [Environment]::NewLine)).TrimEnd() + [Environment]::NewLine
+}
+
+function Export-CodexSharedEnvironment($CodexHome, $SyncRoot) {
+    $envRoot = Join-Path $SyncRoot "environment"
+    New-Item -ItemType Directory -Path $envRoot -Force | Out-Null
+
+    $sharedConfig = Get-CodexSharedConfigContent $CodexHome
+    [System.IO.File]::WriteAllText((Join-Path $envRoot "config-shared.toml"), $sharedConfig, [System.Text.UTF8Encoding]::new($false))
+
+    $hooksPath = Join-Path $CodexHome "hooks.json"
+    if (Test-Path -LiteralPath $hooksPath) {
+        Copy-Item -LiteralPath $hooksPath -Destination (Join-Path $envRoot "hooks.json") -Force
+    }
+
+    $skillsPath = Join-Path $CodexHome "skills"
+    if (Test-Path -LiteralPath $skillsPath) {
+        Copy-DirectoryContents -Source $skillsPath -Destination (Join-Path $envRoot "skills")
+    }
+
+    return $envRoot
+}
+
+function Import-CodexSharedEnvironment($CodexHome, $SyncRoot) {
+    $envRoot = Join-Path $SyncRoot "environment"
+    if (-not (Test-Path -LiteralPath $envRoot)) {
+        throw "Shared environment not found: $envRoot"
+    }
+    New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
+
+    $configPath = Join-Path $CodexHome "config.toml"
+    $sharedConfigPath = Join-Path $envRoot "config-shared.toml"
+    if ((Test-Path -LiteralPath $configPath) -and (Test-Path -LiteralPath $sharedConfigPath)) {
+        $current = [System.IO.File]::ReadAllText($configPath)
+        $shared = [System.IO.File]::ReadAllText($sharedConfigPath)
+        $merged = Merge-CodexSharedConfigSections -TargetContent $current -CurrentContent $shared
+        [System.IO.File]::WriteAllText($configPath, $merged, [System.Text.UTF8Encoding]::new($false))
+    }
+
+    $hooksPath = Join-Path $envRoot "hooks.json"
+    if (Test-Path -LiteralPath $hooksPath) {
+        Copy-Item -LiteralPath $hooksPath -Destination (Join-Path $CodexHome "hooks.json") -Force
+    }
+
+    $skillsPath = Join-Path $envRoot "skills"
+    if (Test-Path -LiteralPath $skillsPath) {
+        Copy-DirectoryContents -Source $skillsPath -Destination (Join-Path $CodexHome "skills")
+    }
+
+    return $envRoot
 }
 
 function Copy-ConfigToCodex($SourcePath, $CodexHome) {
